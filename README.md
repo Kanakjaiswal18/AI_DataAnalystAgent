@@ -1,4 +1,3 @@
-# AI_DataAnalystAgent
 # AI Data Analyst Agent
 
 Converts natural-language questions into SQL, executes them against
