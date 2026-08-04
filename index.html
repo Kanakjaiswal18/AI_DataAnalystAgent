@@ -1,0 +1,212 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AI Data Analyst Agent</title>
+<style>
+  * { box-sizing: border-box; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    background: #f7f8fa;
+    color: #1a1a1a;
+    margin: 0;
+    padding: 2rem 1rem;
+  }
+  #app { max-width: 860px; margin: 0 auto; }
+  h1 { font-size: 1.5rem; margin-bottom: 0.25rem; }
+  .subtitle { color: #666; font-size: 0.9rem; margin-bottom: 1.5rem; }
+
+  #input-row { display: flex; gap: 8px; margin-bottom: 1.5rem; }
+  #question {
+    flex: 1;
+    padding: 12px 16px;
+    border: 1.5px solid #ddd;
+    border-radius: 8px;
+    font-size: 1rem;
+    outline: none;
+  }
+  #question:focus { border-color: #2563eb; }
+  #ask-btn {
+    padding: 12px 22px;
+    background: #2563eb;
+    color: white;
+    border: none;
+    border-radius: 8px;
+    font-weight: 600;
+    cursor: pointer;
+  }
+  #ask-btn:hover { background: #1d4ed8; }
+  #ask-btn:disabled { background: #aaa; cursor: not-allowed; }
+
+  .examples { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 2rem; }
+  .example-pill {
+    background: #eef2ff;
+    color: #3730a3;
+    border: none;
+    border-radius: 16px;
+    padding: 6px 14px;
+    font-size: 0.82rem;
+    cursor: pointer;
+  }
+  .example-pill:hover { background: #e0e7ff; }
+
+  .card {
+    background: white;
+    border: 1px solid #e5e7eb;
+    border-radius: 12px;
+    padding: 1.25rem 1.5rem;
+    margin-bottom: 1rem;
+  }
+  .card h3 {
+    font-size: 0.75rem;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: #888;
+    margin-bottom: 0.5rem;
+  }
+  #sql-block {
+    background: #0f172a;
+    color: #e2e8f0;
+    padding: 12px 16px;
+    border-radius: 8px;
+    font-family: "SF Mono", Menlo, monospace;
+    font-size: 0.85rem;
+    overflow-x: auto;
+    white-space: pre-wrap;
+  }
+  #insight-text { font-size: 1rem; line-height: 1.6; }
+  #chart-img { max-width: 100%; border-radius: 8px; }
+  table { width: 100%; border-collapse: collapse; font-size: 0.88rem; }
+  th, td { text-align: left; padding: 6px 10px; border-bottom: 1px solid #eee; }
+  th { color: #666; font-weight: 600; }
+  .loading { color: #888; font-size: 0.9rem; }
+  .error-box {
+    background: #fef2f2;
+    border: 1px solid #fecaca;
+    color: #991b1b;
+    padding: 1rem;
+    border-radius: 8px;
+  }
+  #results { display: none; }
+</style>
+</head>
+<body>
+<div id="app">
+  <h1>📊 AI Data Analyst Agent</h1>
+  <div class="subtitle">Ask a question — the agent writes the SQL, runs it, and explains the result.</div>
+
+  <div id="input-row">
+    <input id="question" type="text" placeholder="e.g. What were total sales by region last quarter?" autocomplete="off">
+    <button id="ask-btn">Ask</button>
+  </div>
+
+  <div class="examples">
+    <button class="example-pill" data-q="What are the top 5 best-selling products by revenue?">Top 5 products by revenue</button>
+    <button class="example-pill" data-q="Show monthly order volume for 2025">Monthly orders in 2025</button>
+    <button class="example-pill" data-q="Which region has the most customers?">Customers by region</button>
+    <button class="example-pill" data-q="What's the average order value by product category?">Avg order value by category</button>
+  </div>
+
+  <div id="status"></div>
+
+  <div id="results">
+    <div class="card">
+      <h3>Generated SQL</h3>
+      <div id="sql-block"></div>
+    </div>
+    <div class="card">
+      <h3>Insight</h3>
+      <div id="insight-text"></div>
+    </div>
+    <div class="card" id="chart-card" style="display:none;">
+      <h3>Visualization</h3>
+      <img id="chart-img" alt="Result chart">
+    </div>
+    <div class="card">
+      <h3>Result Data (<span id="row-count"></span> rows)</h3>
+      <div style="overflow-x:auto;">
+        <table id="result-table"></table>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+const API = ''; // same-origin
+const questionInput = document.getElementById('question');
+const askBtn = document.getElementById('ask-btn');
+const statusEl = document.getElementById('status');
+const resultsEl = document.getElementById('results');
+
+document.querySelectorAll('.example-pill').forEach(btn => {
+  btn.addEventListener('click', () => {
+    questionInput.value = btn.dataset.q;
+    ask();
+  });
+});
+
+askBtn.addEventListener('click', ask);
+questionInput.addEventListener('keydown', e => {
+  if (e.key === 'Enter') ask();
+});
+
+async function ask() {
+  const question = questionInput.value.trim();
+  if (!question) return;
+
+  askBtn.disabled = true;
+  resultsEl.style.display = 'none';
+  statusEl.innerHTML = '<div class="loading">🤔 Generating SQL, running query, building insight…</div>';
+
+  try {
+    const res = await fetch(`${API}/chat`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ question, history: [] }),
+    });
+    const data = await res.json();
+
+    if (data.type === 'error') {
+      statusEl.innerHTML = `<div class="error-box"><strong>Agent couldn't complete this request.</strong><br>${data.message}${data.sql ? `<br><br><code>${data.sql}</code>` : ''}</div>`;
+      return;
+    }
+
+    statusEl.innerHTML = '';
+    document.getElementById('sql-block').textContent = data.sql;
+    document.getElementById('insight-text').textContent = data.insight;
+    document.getElementById('row-count').textContent = data.row_count;
+
+    const chartCard = document.getElementById('chart-card');
+    if (data.chart && data.chart.image_base64) {
+      document.getElementById('chart-img').src = `data:image/png;base64,${data.chart.image_base64}`;
+      chartCard.style.display = 'block';
+    } else {
+      chartCard.style.display = 'none';
+    }
+
+    const table = document.getElementById('result-table');
+    table.innerHTML = '';
+    const thead = document.createElement('tr');
+    data.columns.forEach(c => {
+      const th = document.createElement('th'); th.textContent = c; thead.appendChild(th);
+    });
+    table.appendChild(thead);
+    data.rows.slice(0, 100).forEach(row => {
+      const tr = document.createElement('tr');
+      row.forEach(v => {
+        const td = document.createElement('td'); td.textContent = v; tr.appendChild(td);
+      });
+      table.appendChild(tr);
+    });
+
+    resultsEl.style.display = 'block';
+  } catch (err) {
+    statusEl.innerHTML = `<div class="error-box">Connection error: ${err.message}</div>`;
+  } finally {
+    askBtn.disabled = false;
+  }
+}
+</script>
+</body>
+</html>
