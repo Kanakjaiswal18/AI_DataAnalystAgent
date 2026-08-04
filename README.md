@@ -173,7 +173,7 @@ Results:
 
 The evaluation demonstrates the ability of the agent to generate, validate, and execute analytical SQL queries across different levels of complexity.
 
--- 
+---
 
 # Setup
 
