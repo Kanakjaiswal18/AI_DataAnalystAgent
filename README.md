@@ -150,6 +150,30 @@ Retries are bounded using configurable limits to prevent infinite loops.
 - Automatic chart selection based on query output
 
 ---
+# Evaluation
+
+The agent was evaluated on a set of 60 analytical questions covering:
+
+- Basic aggregations
+- Filtering and sorting
+- Revenue analysis
+- Customer segmentation
+- Time-series analysis
+- Multi-table joins
+- Business metric calculations
+
+Results:
+
+| Metric | Result |
+|--------|--------|
+| Total Evaluation Questions | 60 |
+| Successful SQL Executions | 54 |
+| SQL Success Rate | 90% |
+| Average Response Time | 37.3 seconds |
+
+The evaluation demonstrates the ability of the agent to generate, validate, and execute analytical SQL queries across different levels of complexity.
+
+-- 
 
 # Setup
 
