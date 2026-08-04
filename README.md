@@ -1,100 +1,344 @@
 # AI Data Analyst Agent
 
-Converts natural-language questions into SQL, executes them against
-PostgreSQL, and returns a plain-English insight plus an auto-generated
-chart — with a LangGraph-orchestrated self-correction loop and a hard
-safety layer that guarantees only read-only queries ever reach the database.
+An AI-powered analytics assistant that converts natural language questions into SQL queries, executes them against PostgreSQL, and returns business insights with automatic visualizations.
 
-## Architecture
+The system uses a LangGraph-orchestrated workflow with schema-aware SQL generation, SQL validation guardrails, execution error recovery, and automated insight generation.
+
+---
+
+# Architecture
 
 ```
-User question
-     │
-     ▼
-┌─────────────────┐
-│  generate_sql    │  LLM writes SQL against live-introspected schema
+User Question
+      │
+      ▼
+┌──────────────────┐
+│  Generate SQL    │
+│  (LLM + Schema)  │
 └────────┬─────────┘
          ▼
-┌─────────────────┐     invalid SQL (blocked keyword,
-│  validate_sql    │────multi-statement, no SELECT)────┐
-└────────┬─────────┘                                    │
-         │ valid                                        │
-         ▼                                               │
-┌─────────────────┐     DB execution error               │
-│  execute_sql     │────(bad column, syntax, etc.)───────┤
-└────────┬─────────┘                                    │
-         │ success                          retry, up to │
-         ▼                                MAX_SQL_RETRIES │
-┌─────────────────┐                                      │
-│ generate_insight │  ◄────────────────────────────────────┘ (loops back
-└────────┬─────────┘                                       to generate_sql
-         ▼                                                  with the error
-┌─────────────────┐                                         fed back in)
-│  generate_chart  │  heuristic chart-type selection, matplotlib -> base64
+┌──────────────────┐
+│  Validate SQL    │
+│  Safety Layer    │
+└────────┬─────────┘
+         │
+         ▼
+┌──────────────────┐
+│ Execute Query    │
+│ PostgreSQL       │
+└────────┬─────────┘
+         │
+         │ SQL error
+         ▼
+┌──────────────────┐
+│ Retry Workflow   │
+│ Error Feedback   │
+└────────┬─────────┘
+         │
+         ▼
+┌──────────────────┐
+│ Generate Insight │
 └────────┬─────────┘
          ▼
-     JSON response
+┌──────────────────┐
+│ Generate Chart   │
+└────────┬─────────┘
+         ▼
+    JSON Response
 ```
 
-This is a genuine self-correcting agent, not a single prompt-and-pray call:
-if the LLM writes SQL referencing a nonexistent column, or the query times
-out, the actual database/validation error is fed back to the model and it
-gets another attempt (bounded, so it can't loop forever).
+The agent does not rely on hardcoded database knowledge. Before generating SQL, it dynamically retrieves the PostgreSQL schema and provides the available tables, columns, and relationships to the LLM.
 
-## Why the safety layer matters
+If the generated SQL fails validation or database execution, the error is fed back into the LangGraph workflow and the model attempts correction within a bounded retry limit.
 
-Letting an LLM write and execute arbitrary SQL is dangerous by default.
-`app/sql_guard.py` is the guardrail:
-- Single-statement only (blocks `; DROP TABLE ...` injection via statement stacking)
-- Must start with `SELECT` or a read-only `WITH ... SELECT` CTE
-- Blocklist of DML/DDL/DCL keywords, checked as whole tokens (not naive substring match)
-- SQL comments stripped/rejected (a common vector for smuggling extra clauses)
-- Every query gets a hard `LIMIT` cap regardless of what the LLM wrote, and a
-  `statement_timeout` regardless of query complexity
+---
 
-## Setup
+# Key Features
+
+## Natural Language → SQL
+
+Users can ask business questions such as:
+
+```
+What are the top 5 products by revenue?
+```
+
+or:
+
+```
+What was total revenue by month in 2025?
+```
+
+The agent generates the required SQL automatically.
+
+---
+
+## Schema-Aware SQL Generation
+
+The system dynamically inspects the PostgreSQL database schema using `information_schema`.
+
+The LLM receives:
+
+- Available tables
+- Column names
+- Data types
+- Foreign key relationships
+
+This improves SQL generation reliability without manually defining database context.
+
+---
+
+## SQL Safety Guardrails
+
+The SQL validation layer ensures only safe analytical queries reach the database.
+
+Implemented protections:
+
+- Allows only read-only queries
+- Blocks INSERT, UPDATE, DELETE, DROP, ALTER, and other unsafe operations
+- Rejects multi-statement SQL execution
+- Validates SELECT and WITH queries
+- Removes SQL comments
+- Applies query timeout limits
+- Restricts maximum returned rows
+
+---
+
+## Self-Correcting Agent Workflow
+
+The LangGraph workflow handles failures automatically.
+
+Example:
+
+```
+LLM generates SQL
+        ↓
+SQL validation
+        ↓
+Database execution
+        ↓
+Execution error
+        ↓
+Error sent back to LLM
+        ↓
+Corrected SQL attempt
+```
+
+Retries are bounded using configurable limits to prevent infinite loops.
+
+---
+
+# Technology Stack
+
+## Backend
+
+- Python
+- FastAPI
+- LangGraph
+- PostgreSQL
+- psycopg2
+
+## AI / LLM
+
+- OpenAI-compatible LLM endpoints
+- Local LLM support through Ollama
+- Schema-aware prompting
+
+## Data Visualization
+
+- Matplotlib
+- Automatic chart selection based on query output
+
+---
+
+# Setup
+
+## 1. Install dependencies
 
 ```bash
 pip install -r requirements.txt
-cp .env.example .env   # fill in OPENAI_API_KEY and Postgres credentials
-
-# create + seed a demo database (customers/products/orders/order_items)
-createdb analyst_demo
-python seed_db.py
-
-# run the API + demo UI
-uvicorn app.main:app --reload --port 8000
 ```
 
-Open `http://localhost:8000` for the demo chat UI, or call the API directly:
+---
+
+## 2. Configure Environment Variables
+
+Create a `.env` file:
+
+```env
+OPENAI_API_KEY=your_llm_key
+
+# Optional OpenAI-compatible endpoint
+# OPENAI_BASE_URL=http://localhost:11434/v1
+
+SQL_MODEL=qwen2.5:7b
+INSIGHT_MODEL=qwen2.5:7b
+
+
+# PostgreSQL (Neon or local PostgreSQL)
+
+PG_HOST=your_postgres_host
+PG_PORT=5432
+PG_DB=your_database_name
+PG_USER=your_username
+PG_PASSWORD=your_password
+
+
+MAX_SQL_RETRIES=2
+MAX_ROWS_RETURNED=500
+QUERY_TIMEOUT_MS=5000
+
+
+APP_API_KEY=
+```
+
+---
+
+# Database Setup
+
+The project includes a synthetic e-commerce dataset containing:
+
+- Customers
+- Products
+- Orders
+- Order Items
+
+To create the database tables and populate sample data:
 
 ```bash
-curl -X POST http://localhost:8000/chat \
-  -H "Content-Type: application/json" \
-  -d '{"question": "What are the top 5 products by revenue?"}'
+python seed_db.py
 ```
 
-## Project structure
+Successful execution will create:
 
 ```
-app/
-  config.py     — env-driven settings (LLM provider, DB, safety limits)
-  db.py         — connection pool + live schema introspection
-  sql_guard.py  — SQL safety validation (the guardrail)
-  chart.py      — result-shape -> chart-type heuristic, matplotlib rendering
-  graph.py      — LangGraph state machine (the agent itself)
-  main.py       — FastAPI app (/chat, /schema, /health)
-seed_db.py      — synthetic e-commerce dataset for demoing
-static/index.html — minimal chat UI
+customers
+products
+orders
+order_items
 ```
 
-## Extending it
+with realistic sample transaction data.
 
-- Swap the demo e-commerce schema for a real one — `get_schema_text()` in
-  `db.py` introspects `information_schema` at runtime, so no code changes
-  are needed for a different database.
-- Multi-turn follow-ups ("now break that down by month") already work —
-  the last few conversation turns are passed to `generate_sql` as context.
-- To support multiple chart libraries on the frontend instead of a static
-  PNG, swap `chart.py` to return structured `{x, y, type}` data instead of
-  a rendered image, and let the frontend use Chart.js/Recharts/Plotly.
+---
+
+# Running the Application
+
+Start the FastAPI server:
+
+```bash
+python -m uvicorn main:app --reload --port 8000
+```
+
+The application will start at:
+
+```
+http://localhost:8000
+```
+
+---
+
+# API Endpoints
+
+## Health Check
+
+```
+GET /health
+```
+
+Checks API and database connectivity.
+
+---
+
+## Database Schema
+
+```
+GET /schema
+```
+
+Returns the currently detected database schema.
+
+---
+
+## Chat Endpoint
+
+```
+POST /chat
+```
+
+Example request:
+
+```json
+{
+  "question": "What are the top 5 products by revenue?"
+}
+```
+
+Example response:
+
+```json
+{
+  "type": "result",
+  "sql": "SELECT ...",
+  "rows": [],
+  "insight": "The top revenue generating products are...",
+  "chart": "..."
+}
+```
+
+---
+
+# Project Structure
+
+```
+proj-healthcare/
+
+├── main.py
+│   FastAPI application and API routes
+
+├── graph.py
+│   LangGraph agent workflow
+
+├── db.py
+│   PostgreSQL connection pooling and schema introspection
+
+├── config.py
+│   Environment configuration
+
+├── sql_guard.py
+│   SQL validation and safety checks
+
+├── chart.py
+│   Automatic visualization generation
+
+├── seed_db.py
+│   Synthetic e-commerce database generator
+
+├── static/
+│   └── index.html
+│       Web interface
+
+├── requirements.txt
+│
+└── .env
+    Environment variables
+```
+
+---
+
+# Future Improvements
+
+Possible extensions:
+
+- Support additional database engines
+- Add user authentication
+- Add conversational memory
+- Support uploaded CSV/Excel datasets
+- Add more visualization types
+- Deploy as a cloud-hosted analytics assistant
+
+---
+
+# License
+
+This project is intended for educational and portfolio demonstration purposes.
